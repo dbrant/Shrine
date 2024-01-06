@@ -1,17 +1,30 @@
+//
+// Mandelbrot explorer for TempleOS.
+// Dmitry Brant, 2023.
+//
 
-U0 MandelFrame(CDC *dc,
-  I64 width, I64 height,
-  F64 xCenter, F64 yCenter,
-  F64 xExtent, I64 iterations)
+I64 width = 640;
+I64 height = 480;
+I64 iterations = 24;
+F64 xCenter = -0.5, yCenter = 0.0;
+F64 xExtent = 3.0;
+
+
+I64 numCores = mp_cnt;
+
+// -------------------
+
+CDC* images[numCores];
+I64 rowsPerCore = height / numCores;
+
+
+U0 MandelFrame(I64 core)
 {
-
-  // for future smp use:
+  CDC* image = images[core];
   I64 startX = 0;
   I64 maxX = startX + width;
-  I64 startY = 0;
-  I64 maxY = startY + height;
-
-
+  I64 startY = core * rowsPerCore;
+  I64 maxY = startY + rowsPerCore;
 
   F64 xmin = xCenter - (xExtent / 2.0);
   F64 xmax = xmin + xExtent;
@@ -44,18 +57,22 @@ U0 MandelFrame(CDC *dc,
           break;
         }
       }
-      
-     
+       
       if (iteration >= iterations) {
-        dc->color = BLACK;
+        image->color = BLACK;
       } else {
-        dc->color = iteration & 15;
+        image->color = iteration & 15;
       }
 
-      GrPlot(dc, px, py);
-
-
+      GrPlot(image, px, py - startY);
     }
+  }
+}
+
+U0 DrawIt(CTask *task, CDC *dc) {
+  I64 i;
+  for (i=0; i<numCores; i++) {
+    GrBlot(dc, 0, i*rowsPerCore, images[i]);
   }
 }
 
@@ -67,30 +84,28 @@ U0 Mandel() {
 
   CDC *dc = DCAlias;
   DocClear;
-  DCFill;
-
-  
-  I64 width = 200;
-  I64 height = 200;
-  F64 xCenter = -0.5;
-  F64 yCenter = 0.0;
-  F64 xExtent = 3.0;
-  I64 iterations = 32;
-  
+  DCFill;  
 
   I64 msg_code, arg1, arg2;
-  I64 lastx, lasty;
+  I64 i, lastx, lasty;
   F64 aspect;
   Bool moving = FALSE;
   Bool renderFrame = TRUE;
+
+  for (i=0; i<numCores; i++) {
+    images[i] = DCNew(width, rowsPerCore);
+  }
+
+  Fs->draw_it = &DrawIt;
 
   while(TRUE) {
 
     if (renderFrame) {
       renderFrame = FALSE;
-
-      MandelFrame(dc, width, height, xCenter, yCenter,
-        xExtent, iterations);
+      
+      for (i=0; i<numCores; i++) {
+        JobQue(&MandelFrame, i, i);
+      }
     }
 
     msg_code = GetMsg(&arg1, &arg2,
@@ -166,10 +181,16 @@ U0 Mandel() {
     }
   }
 
-m_done:
+m_done:
+
+  for (i=0; i<numCores; i++) {
+    DCDel(images[i]);
+  }
+
   DCFill;
   DCDel(dc);
   SettingsPop;
 }
 
 Mandel;
+

@@ -1,26 +1,31 @@
 //
 // Mandelbrot explorer for TempleOS.
+// Run in an emulator with acceleration!
+//
 // Dmitry Brant, 2023.
 //
 
-I64 width = 640;
-I64 height = 480;
+I64 width = GR_WIDTH;
+I64 height = GR_HEIGHT;
 I64 iterations = 24;
 F64 xCenter = -0.5, yCenter = 0.0;
 F64 xExtent = 3.0;
 
 
-I64 numCores = mp_cnt;
+I64 numCores = mp_cnt - 1;
 
 // -------------------
 
-CDC* images[numCores];
+CDC* image;
 I64 rowsPerCore = height / numCores;
+I64 currentSequence;
 
 
 U0 MandelFrame(I64 core)
 {
-  CDC* image = images[core];
+//  CDC* dc = DCAlias(image);
+  I64 mySequence = currentSequence;
+
   I64 startX = 0;
   I64 maxX = startX + width;
   I64 startY = core * rowsPerCore;
@@ -40,7 +45,8 @@ U0 MandelFrame(I64 core)
 
   for (py = startY; py < maxY; py++) {
     y0 = ymin + ToF64(py) * yscale;
-    
+    if (mySequence != currentSequence)
+      break;
 
     for (px = startX; px < maxX; px++) {
       x = 0.0; y = 0.0;
@@ -57,23 +63,34 @@ U0 MandelFrame(I64 core)
           break;
         }
       }
-       
-      if (iteration >= iterations) {
-        image->color = BLACK;
-      } else {
-        image->color = iteration & 15;
-      }
 
-      GrPlot(image, px, py - startY);
+/*       
+      if (iteration >= iterations) {
+        dc->color = BLACK;
+      } else {
+        dc->color = iteration & 15;
+      }
+      GrPlot0(dc, px, py);
+*/
+
+      // Instead of getting a DC handle
+      // every time, we can just poke
+      // into the body of the DC.
+      // (is that ok?)
+      if (iteration >= iterations)
+        image->body[py*width+px] = 0;
+      else
+        image->body[py*width+px] = iteration & 15;
+
+
     }
   }
+//  DCDel(dc);
 }
 
 U0 DrawIt(CTask *task, CDC *dc) {
-  I64 i;
-  for (i=0; i<numCores; i++) {
-    GrBlot(dc, 0, i*rowsPerCore, images[i]);
-  }
+  image->flags |= DCF_NO_TRANSPARENTS;
+  GrBlot(dc, 0, 0, image);
 }
 
 U0 Mandel() {
@@ -82,19 +99,30 @@ U0 Mandel() {
   WinBorder;
   WinMax;
 
-  CDC *dc = DCAlias;
   DocClear;
   DCFill;  
 
+  Fs->win_inhibit = WIG_TASK_DFT-WIF_SELF_FOCUS-WIF_SELF_BORDER;
+
   I64 msg_code, arg1, arg2;
-  I64 i, lastx, lasty;
+  I64 i, j, lastx, lasty;
   F64 aspect;
   Bool moving = FALSE;
   Bool renderFrame = TRUE;
 
-  for (i=0; i<numCores; i++) {
-    images[i] = DCNew(width, rowsPerCore);
+
+  // Make our own palette, if we like.
+  CBGR48 bgr;
+  for (i=0; i<COLORS_NUM; i++) {
+    j = 0xFFFF * i / (COLORS_NUM-1);
+    bgr.b = j;
+    bgr.g = j;
+    bgr.r = j;
+//    GrPaletteColorSet(i,bgr);
   }
+
+
+  image = DCNew(width, height);
 
   Fs->draw_it = &DrawIt;
 
@@ -103,8 +131,9 @@ U0 Mandel() {
     if (renderFrame) {
       renderFrame = FALSE;
       
+      currentSequence++;
       for (i=0; i<numCores; i++) {
-        JobQue(&MandelFrame, i, i);
+        JobQue(&MandelFrame, i, i+1);
       }
     }
 
@@ -182,15 +211,9 @@ U0 Mandel() {
   }
 
 m_done:
-
-  for (i=0; i<numCores; i++) {
-    DCDel(images[i]);
-  }
-
+  DCDel(image);
   DCFill;
-  DCDel(dc);
   SettingsPop;
 }
 
 Mandel;
-
